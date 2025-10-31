@@ -1,78 +1,40 @@
 "use client";
+import ContentstackAppSDK from "@contentstack/app-sdk";
+import { useEffect, useMemo, useState } from "react";
 
-import { useEffect, useState } from "react";
-
-/** Minimal types your widget actually uses */
-type Asset = {
-  uid: string;
-  url?: string;
-  description?: string;
-};
-
-type SidebarWidget = {
-  getData<T = Asset>(): Promise<T>;
-  setData(data: Partial<Asset>): Promise<void>;
-  frame?: { updateHeight(h: number): void | Promise<void> };
-  onSave?(cb: () => void): void;
-};
-
-type AppLocation = {
-  AssetSidebarWidget?: SidebarWidget;
-};
-
-type AppSDK = {
-  /** In v2 this exists at the root */
-  getConfig<T = Record<string, unknown>>(): Promise<T>;
-  location: AppLocation;
-};
-
-type AppState = {
-  config: Record<string, unknown>;
-  location: AppLocation | null;
-  appSdkInitialized: boolean;
-};
+type AppSDK = Awaited<ReturnType<typeof ContentstackAppSDK.init>>;
+type AssetSidebarWidget = NonNullable<AppSDK["location"]["AssetSidebarWidget"]>;
+type SafeConfig = { model?: string };
 
 export default function AssetSidebar() {
-  const [sdk, setSdk] = useState<AppSDK | null>(null);
+  const [widget, setWidget] = useState<AssetSidebarWidget | null>(null);
+  const [model, setModel] = useState("gpt-4o-mini");
   const [assetUid, setAssetUid] = useState("");
   const [assetUrl, setAssetUrl] = useState("");
   const [altText, setAltText] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
-  const [state, setState] = useState<AppState>({
-    config: {},
-    location: null,
-    appSdkInitialized: false,
-  });
+
+  const appToken = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("app-token") || "";
+  }, []);
 
   useEffect(() => {
     let mounted = true;
-    import("@contentstack/app-sdk").then(async ({ default: csSdk }) => {
-      // Do not annotate the param type here; cast the resolved value instead
-      const raw = await csSdk.init();
-      const appSdk = raw as unknown as AppSDK;
-
+    (async () => {
+      const { default: cs } = await import("@contentstack/app-sdk");
+      const app = (await cs.init()) as AppSDK;
       if (!mounted) return;
 
-      setSdk(appSdk);
+      const locData = await app.location.AssetSidebarWidget?.getData();
+      const cfg = (await app.getConfig()) as SafeConfig;
 
-      const locData =
-        await appSdk.location.AssetSidebarWidget?.getData<Asset>();
-      const config = await appSdk.getConfig<Record<string, unknown>>();
-
+      setWidget(app.location.AssetSidebarWidget ?? null);
+      setModel(cfg?.model || "gpt-4o-mini");
       setAssetUid(locData?.uid ?? "");
       setAssetUrl(locData?.url ?? "");
-
-      // Optional
-      // await appSdk.location.AssetSidebarWidget?.frame?.updateHeight(360);
-
-      setState({
-        config,
-        location: appSdk.location,
-        appSdkInitialized: true,
-      });
-    });
-
+    })();
     return () => {
       mounted = false;
     };
@@ -85,10 +47,13 @@ export default function AssetSidebar() {
     try {
       const r = await fetch("/api/generate-alt", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ imageUrl: assetUrl }),
+        headers: {
+          "content-type": "application/json",
+          "x-app-token": appToken,
+        },
+        body: JSON.stringify({ imageUrl: assetUrl, model }),
       });
-      const j = (await r.json()) as { altText?: string };
+      const j = await r.json();
       setAltText(j.altText || "");
       setStatus("Alt text generated. Review and Save.");
     } catch {
@@ -99,18 +64,13 @@ export default function AssetSidebar() {
   };
 
   const save = async (description: string) => {
-    const widget: SidebarWidget | undefined =
-      sdk?.location.AssetSidebarWidget ?? state.location?.AssetSidebarWidget;
-
     if (!widget) {
       setStatus("Unable to save: widget not available.");
       return;
     }
-
     await widget.setData({ description });
     setAltText("");
     setStatus("Description set. Please click Save in the CMS, then Publish.");
-
     try {
       widget.onSave?.(() => setStatus(""));
     } catch {
@@ -141,9 +101,7 @@ export default function AssetSidebar() {
         Save
       </button>
 
-      {status && (
-        <div className="mt-2 text-lg text-red-600 font-bold">{status}</div>
-      )}
+      {status && <div className="mt-2 text-sm">{status}</div>}
     </div>
   );
 }

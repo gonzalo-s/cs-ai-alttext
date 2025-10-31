@@ -1,51 +1,63 @@
+// pages/api/generate-alt.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import OpenAI from "openai";
-import { getStoredKey } from "./app-config/save-ai-key";
-import { verifySignedLocation } from "@/lib/verifySignedLocation";
+import { verifySignedLocation } from "../../lib/verifySignedLocation";
+import { getOpenAIKeyFor } from "./app-config/save-ai-key";
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  if (req.method !== "POST") return res.status(405).end();
-
   try {
-    const signed = await verifySignedLocation(req);
-    const apiKey = getStoredKey(signed.stackApiKey);
-    if (!apiKey)
-      return res.status(400).json({ error: "AI key not configured" });
+    if (req.method !== "POST") return res.status(405).end();
 
-    const { imageUrl } = req.body;
-    if (!imageUrl) return res.status(400).json({ error: "Missing imageUrl" });
+    const { stackApiKey } = await verifySignedLocation(req);
+    const key = getOpenAIKeyFor(stackApiKey);
+    if (!key) return res.status(400).json({ error: "Missing OpenAI key" });
 
-    const openai = new OpenAI({ apiKey });
+    const { imageUrl, model = "gpt-4o-mini" } = req.body || {};
+    if (!imageUrl || typeof imageUrl !== "string") {
+      return res.status(400).json({ error: "imageUrl required" });
+    }
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "Provide a single accurate sentence of alt-text. No brand guesses.",
+    // minimal OpenAI Vision request without external deps
+    const openaiRes = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
         },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Describe this image:" },
-            { type: "image_url", image_url: { url: imageUrl } },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Write a short, helpful alt text for accessibility.",
+                },
+                { type: "image_url", image_url: { url: imageUrl } },
+              ],
+            },
           ],
-        },
-      ],
-      temperature: 0.2,
-      max_tokens: 100,
-    });
+          temperature: 0.2,
+          max_tokens: 120,
+        }),
+      }
+    );
 
-    const altText =
-      completion.choices?.[0]?.message?.content?.trim() || "Image";
+    if (!openaiRes.ok) {
+      const msg = await openaiRes.text().catch(() => "");
+      return res.status(502).json({ error: "OpenAI error", detail: msg });
+    }
 
+    const data = await openaiRes.json();
+    const altText = data?.choices?.[0]?.message?.content?.trim?.() || "";
     return res.status(200).json({ altText });
-  } catch (e) {
+  } catch (e: any) {
     console.error(e);
-    return res.status(500).json({ error: "Generation failed" });
+    return res.status(401).json({ error: e?.message || "Unauthorized" });
   }
 }

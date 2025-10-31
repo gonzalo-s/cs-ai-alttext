@@ -1,31 +1,37 @@
+// pages/api/app-config/save-ai-key.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { verifySignedLocation } from "@/lib/verifySignedLocation";
+import { verifySignedLocation } from "../../../lib/verifySignedLocation";
 
-const KEY_STORE = new Map<string, string>(); // key: stackApiKey
+// simple in-memory store for dev. replace with a secrets manager or DB in prod
+const secrets = new Map<string, { provider: "openai"; key: string }>();
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  if (req.method !== "POST") return res.status(405).end();
-
   try {
-    const signed = await verifySignedLocation(req);
+    if (req.method !== "POST") return res.status(405).end();
 
-    const { provider, key } = req.body as { provider: string; key: string };
-    if (provider !== "openai" || !key?.startsWith("sk-")) {
-      return res.status(400).json({ error: "Invalid key" });
+    const { stackApiKey } = await verifySignedLocation(req);
+    const { provider, key } = req.body || {};
+    if (
+      provider !== "openai" ||
+      typeof key !== "string" ||
+      !key.startsWith("sk-")
+    ) {
+      return res.status(400).send("Invalid payload");
     }
 
-    KEY_STORE.set(signed.stackApiKey, key);
-    res.status(200).json({ ok: true });
-  } catch (e) {
+    secrets.set(stackApiKey, { provider: "openai", key });
+    return res.status(200).json({ ok: true });
+  } catch (e: any) {
     console.error(e);
-    res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).send(e?.message || "Unauthorized");
   }
 }
 
-// Helper for other endpoints
-export function getStoredKey(stackApiKey: string) {
-  return KEY_STORE.get(stackApiKey);
+// helper you can import elsewhere
+export function getOpenAIKeyFor(stackApiKey: string) {
+  const rec = secrets.get(stackApiKey);
+  return rec?.key || "";
 }
