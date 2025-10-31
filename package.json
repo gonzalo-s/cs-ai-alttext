@@ -10,12 +10,18 @@
   },
   "dependencies": {
     "@contentstack/app-sdk": "^2.3.3",
+    "install": "^0.13.0",
+    "jose": "^6.1.0",
+    "jsonwebtoken": "^9.0.2",
     "next": "16.0.1",
+    "npm": "^11.6.2",
+    "openai": "^6.7.0",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
