@@ -23,7 +23,14 @@ export default async function handler(
     }
 
     secrets.set(stackApiKey, { provider: "openai", key });
-    return res.status(200).json({ ok: true });
+    // log the saved entry directly for debugging
+    console.log(
+      "🚀 ~ handler ~ saved for stackApiKey:",
+      stackApiKey,
+      secrets.get(stackApiKey)
+    );
+    // return the stackApiKey so the client can confirm which stack key was stored
+    return res.status(200).json({ ok: true, stackApiKey });
   } catch (e: any) {
     console.error(e);
     return res.status(401).send(e?.message || "Unauthorized");
@@ -32,6 +39,7 @@ export default async function handler(
 
 // helper you can import elsewhere
 export function getOpenAIKeyFor(stackApiKey: string) {
+  console.log("🚀 ~ getOpenAIKeyFor ~ secrets:", secrets);
   const rec = secrets.get(stackApiKey);
   return rec?.key || "";
 }
