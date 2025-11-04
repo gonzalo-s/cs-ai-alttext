@@ -28,10 +28,32 @@ export default function AppConfig() {
     })();
   }, []);
 
+  // lightweight decode to read JWT exp without verifying signature
+  function getJwtExp(ts: string): number | null {
+    try {
+      const parts = ts.split(".");
+      if (parts.length < 2) return null;
+      const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      const pad = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+      const json = JSON.parse(atob(pad));
+      return typeof json.exp === "number" ? json.exp : null;
+    } catch {
+      return null;
+    }
+  }
+
   const onSave = async () => {
     try {
       if (!appToken) {
         setStatus("Missing app token. Ensure App Configuration is signed.");
+        return;
+      }
+
+      // Pre-check expiry to avoid a roundtrip if the token is already stale
+      const exp = getJwtExp(appToken);
+      if (exp && exp * 1000 <= Date.now()) {
+        setStatus("Session expired. Reloading configuration...");
+        setTimeout(() => window.location.reload(), 400);
         return;
       }
 
@@ -51,7 +73,15 @@ export default function AppConfig() {
           },
           body: JSON.stringify({ provider: "openai", key: aiKey.trim() }),
         });
-        if (!resp.ok) throw new Error("Failed to store secret on server");
+        if (!resp.ok) {
+          const msg = await resp.text();
+          if (resp.status === 401 && /TOKEN_EXPIRED|expired/i.test(msg)) {
+            setStatus("Session expired. Reloading configuration...");
+            setTimeout(() => window.location.reload(), 400);
+            return;
+          }
+          throw new Error("Failed to store secret on server");
+        }
       }
 
       const { default: csSdk } = await import("@contentstack/app-sdk");

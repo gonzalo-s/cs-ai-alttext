@@ -19,10 +19,13 @@ function getAppToken(req: NextApiRequest): string | null {
   return null;
 }
 
-let cachedPem: string | null = null;
+let cachedPem: { pem: string; fetchedAt: number } | null = null;
+const PEM_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 async function fetchSigningKeyPEM(): Promise<string> {
-  if (cachedPem) return cachedPem;
+  if (cachedPem && Date.now() - cachedPem.fetchedAt < PEM_TTL_MS) {
+    return cachedPem.pem;
+  }
 
   const base = process.env.CONTENTSTACK_BASE_URL;
   if (!base) {
@@ -40,7 +43,7 @@ async function fetchSigningKeyPEM(): Promise<string> {
     throw new Error("Signing key PEM missing or malformed");
   }
 
-  cachedPem = pem;
+  cachedPem = { pem, fetchedAt: Date.now() };
   return pem;
 }
 
@@ -57,8 +60,12 @@ export async function verifySignedLocation(
     payload = jwt.verify(token, pem, {
       algorithms: ["RS256"],
     }) as jwt.JwtPayload;
-  } catch {
-    throw new Error("Invalid or expired app-token");
+  } catch (e: unknown) {
+    // Normalize errors so the client can react appropriately
+    if ((e as { name?: string })?.name === "TokenExpiredError") {
+      throw new Error("TOKEN_EXPIRED");
+    }
+    throw new Error("INVALID_APP_TOKEN");
   }
 
   const stackApiKey = payload["stack_api_key"];

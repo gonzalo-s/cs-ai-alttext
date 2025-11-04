@@ -6,19 +6,11 @@ import OpenAI from "openai";
 
 // Extract plain text from the Responses API
 function extractText(resp: OpenAI.Responses.Response): string {
-  console.log("🚀 ~ extractText ~ resp:", resp);
   // Preferred helper when available
   const asText = resp?.output_text;
   if (typeof asText === "string" && asText.trim()) return asText.trim();
 
-  // Fallback to walking the output array
-  const block = resp?.output?.find?.(
-    (b: any) =>
-      Array.isArray(b?.content) &&
-      b.content.some((c: any) => c.type === "output_text")
-  );
-  const textPart = block?.content?.find?.((c: any) => c.type === "output_text");
-  if (typeof textPart?.text === "string") return textPart.text.trim();
+  // TODO: add fallback according to API response structure
 
   // Last resort
   return "";
@@ -33,11 +25,9 @@ export default async function handler(
 
     // Verify this request comes from the Contentstack UI location
     const { stackApiKey } = await verifySignedLocation(req);
-    console.log("🚀 ~ handler ~ stackApiKey:", stackApiKey);
 
     // Get the per-stack OpenAI key that you stored in /api/app-config/save-ai-key
     const apiKey = getOpenAIKeyFor(stackApiKey);
-    console.log("🚀 ~ handler ~ apiKey:", apiKey);
     if (!apiKey) return res.status(400).json({ error: "Missing OpenAI key" });
 
     const { imageUrl, model = "gpt-4o-mini" } = req.body || {};
