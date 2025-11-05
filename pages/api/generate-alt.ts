@@ -50,8 +50,8 @@ export default async function handler(
           role: "user",
           content: [
             { type: "input_text", text: instructions },
-            { type: "input_image", image_url: imageUrl },
-          ] as any,
+            { type: "input_image", image_url: imageUrl, detail: "low" },
+          ],
         },
       ],
       temperature: 0.2,
@@ -60,8 +60,9 @@ export default async function handler(
 
     const altText = extractText(response) || "";
     return res.status(200).json({ altText });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error(e);
-    return res.status(401).json({ error: e?.message || "Unauthorized" });
+    const msg = (e as { message?: string })?.message || "Unauthorized";
+    return res.status(401).json({ error: msg });
   }
 }

@@ -9,13 +9,11 @@ export type SignedInfo = {
 };
 
 function getAppToken(req: NextApiRequest): string | null {
+  // Accept tokens only via headers to avoid leakage via URLs/logs
   const hdr =
     req.headers["x-app-token"] || req.headers["x-contentstack-app-token"];
-  const q = req.query["app-token"];
   if (typeof hdr === "string") return hdr;
   if (Array.isArray(hdr) && hdr[0]) return hdr[0];
-  if (typeof q === "string") return q;
-  if (Array.isArray(q) && q[0]) return q[0];
   return null;
 }
 

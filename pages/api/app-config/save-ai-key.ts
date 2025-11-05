@@ -23,11 +23,12 @@ export default async function handler(
     }
 
     secrets.set(stackApiKey, { provider: "openai", key });
-    // return the stackApiKey so the client can confirm which stack key was stored
+    // return the stackApiKey so the client can confirm which stack stored the key
     return res.status(200).json({ ok: true, stackApiKey });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error(e);
-    return res.status(401).send(e?.message || "Unauthorized");
+    const msg = (e as { message?: string })?.message || "Unauthorized";
+    return res.status(401).send(msg);
   }
 }
 
