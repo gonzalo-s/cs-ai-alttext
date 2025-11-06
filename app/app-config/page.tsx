@@ -1,13 +1,31 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import type { FormEvent, MouseEvent } from "react";
 
-type SafeConfig = { model?: string; aiKeyMasked?: string };
+export const providers = [
+  { name: "OpenAI", models: ["gpt-4.1-mini", "gpt-4o-mini"] as const },
+  { name: "Gemini", models: ["gemini-2.0-flash-lite"] as const },
+] as const;
+
+export type Provider = (typeof providers)[number];
+export type ProviderName = Provider["name"];
+export type ProviderModel = Provider["models"][number];
+
+export type SafeConfig = {
+  model?: ProviderModel;
+  aiKeyMasked?: string;
+  providerName?: ProviderName;
+};
 
 export default function AppConfig() {
-  const [model, setModel] = useState("gpt-4o-mini");
+  const [selectedProvider, setSelectedProvider] = useState<Provider>(
+    providers[0]
+  );
+  const [model, setModel] = useState<ProviderModel>(providers[0].models[0]);
   const [aiKey, setAiKey] = useState("");
   const [masked, setMasked] = useState<string | undefined>();
   const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
 
   // Signed token provided automatically by Contentstack
   const appToken = useMemo(() => {
@@ -19,11 +37,21 @@ export default function AppConfig() {
     (async () => {
       const { default: csSdk } = await import("@contentstack/app-sdk");
       const sdk = await csSdk.init();
-
-      // sdk.location.AppConfigWidget?.frame?.enableAutoResizing();
-
       const cfg = (await sdk.getConfig()) as SafeConfig;
-      setModel(cfg.model || "gpt-4o-mini");
+
+      // restore provider first
+      const restoredProvider =
+        providers.find((p) => p.name === cfg.providerName) ?? providers[0];
+      setSelectedProvider(restoredProvider);
+
+      // then restore model if it belongs to that provider
+      const allowed = new Set(restoredProvider.models as readonly string[]);
+      if (cfg.model && allowed.has(cfg.model)) {
+        setModel(cfg.model);
+      } else {
+        setModel(restoredProvider.models[0]);
+      }
+
       setMasked(cfg.aiKeyMasked);
     })();
   }, []);
@@ -42,41 +70,41 @@ export default function AppConfig() {
     }
   }
 
-  const onSave = async () => {
+  const saveConfig = async () => {
     try {
       if (!appToken) {
-        setStatus("Missing app token. Ensure App Configuration is signed.");
+        setStatus("Missing app token. Open from App Configuration.");
         return;
       }
-
-      // Pre-check expiry to avoid a roundtrip if the token is already stale
       const exp = getJwtExp(appToken);
       if (exp && exp * 1000 <= Date.now()) {
-        setStatus("Session expired. Reloading configuration...");
+        setStatus("Session expired. Reloading...");
         setTimeout(() => window.location.reload(), 400);
         return;
       }
 
+      setSaving(true);
       setStatus("Saving...");
 
-      // Store the real key only on our backend
+      // send secret to backend only, never store plaintext in config
       if (aiKey.trim()) {
-        if (!aiKey.startsWith("sk-")) {
-          setStatus("API key must start with sk-");
-          return;
-        }
         const resp = await fetch("/api/app-config/save-ai-key", {
           method: "POST",
           headers: {
             "content-type": "application/json",
             "x-app-token": appToken,
           },
-          body: JSON.stringify({ provider: "openai", key: aiKey.trim() }),
+          body: JSON.stringify({
+            provider: selectedProvider.name as ProviderName,
+            model,
+            key: aiKey.trim(),
+          }),
         });
+
         if (!resp.ok) {
           const msg = await resp.text();
           if (resp.status === 401 && /TOKEN_EXPIRED|expired/i.test(msg)) {
-            setStatus("Session expired. Reloading configuration...");
+            setStatus("Session expired. Reloading...");
             setTimeout(() => window.location.reload(), 400);
             return;
           }
@@ -86,10 +114,10 @@ export default function AppConfig() {
 
       const { default: csSdk } = await import("@contentstack/app-sdk");
       const sdk = await csSdk.init();
-
       const appConfigWidget = sdk.location.AppConfigWidget;
+
       if (!appConfigWidget) {
-        setStatus("Must be loaded from App Configuration in Contentstack");
+        setStatus("Open this from App Configuration in Contentstack");
         return;
       }
 
@@ -98,14 +126,23 @@ export default function AppConfig() {
 
       const install = await appConfigWidget.installation.getInstallationData();
 
+      // Persist to installation storage (some locations may read this)
       await appConfigWidget.installation.setInstallationData({
         ...install,
         configuration: {
           ...install.configuration,
-          model: model,
+          providerName: selectedProvider.name as ProviderName,
+          model,
           aiKeyMasked: maskedTail,
         },
       });
+
+      // // Persist to config so other locations using sdk.getConfig() (e.g., Asset Sidebar) can read it
+      // await sdk.setConfig({
+      //   providerName: selectedProvider.name as ProviderName,
+      //   model,
+      //   aiKeyMasked: maskedTail,
+      // });
 
       setAiKey("");
       setMasked(maskedTail);
@@ -113,43 +150,96 @@ export default function AppConfig() {
     } catch (e) {
       console.error(e);
       setStatus("Save failed");
+    } finally {
+      setSaving(false);
     }
   };
 
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    await saveConfig();
+  };
+
   return (
-    <div style={{ padding: 16, maxWidth: 520 }}>
+    <form onSubmit={onSubmit} style={{ padding: 16, maxWidth: 520 }}>
       <h3>AI Alt Text App — Configuration</h3>
+
+      <label style={{ display: "block", marginTop: 12 }}>
+        Provider
+        <select
+          value={selectedProvider.name}
+          onChange={(e) => {
+            const name = e.target.value as ProviderName;
+            const next = providers.find((p) => p.name === name) ?? providers[0];
+            setSelectedProvider(next);
+            // reset model to first of the selected provider
+            setModel(next.models[0]);
+          }}
+          style={{ display: "block", marginTop: 6 }}
+        >
+          {providers.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label style={{ display: "block", marginTop: 12 }}>
         Model
         <select
           value={model}
-          onChange={(e) => setModel(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value as ProviderModel;
+            // guard: only allow models for current provider
+            const allowed = new Set(
+              selectedProvider.models as readonly string[]
+            );
+            setModel(allowed.has(value) ? value : selectedProvider.models[0]);
+          }}
           style={{ display: "block", marginTop: 6 }}
         >
-          <option value="gpt-4o-mini">gpt-4o-mini</option>
-          <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+          {selectedProvider.models.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
         </select>
       </label>
 
       <label style={{ display: "block", marginTop: 12 }}>
-        OpenAI API Key
+        {selectedProvider.name} API Key
         <input
           type="password"
           value={aiKey}
           onChange={(e) => setAiKey(e.target.value)}
-          placeholder="sk-..."
-          style={{ display: "block", marginTop: 6, width: "100%" }}
+          style={{
+            display: "block",
+            marginTop: 6,
+            width: "100%",
+            border: "1px solid #ccc",
+            borderRadius: 4,
+            padding: 8,
+          }}
         />
         <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
           Stored securely on server. Current: {masked || "none"}
         </div>
       </label>
 
-      <button onClick={onSave} style={{ marginTop: 16 }}>
-        Save configuration
+      <button
+        type="button"
+        onClick={(e: MouseEvent<HTMLButtonElement>) => {
+          e.preventDefault();
+          void saveConfig();
+        }}
+        disabled={saving}
+        style={{ marginTop: 16 }}
+      >
+        {saving ? "Saving..." : "Save configuration"}
       </button>
+
       <div style={{ marginTop: 8, fontSize: 12 }}>{status}</div>
-    </div>
+    </form>
   );
 }

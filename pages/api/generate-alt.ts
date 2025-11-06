@@ -1,20 +1,12 @@
 // pages/api/generate-alt.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { verifySignedLocation } from "../../lib/verifySignedLocation";
-import { getOpenAIKeyFor } from "./app-config/save-ai-key";
-import OpenAI from "openai";
+import { getAIKeyFor } from "./app-config/save-ai-key";
+import { generateText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
-// Extract plain text from the Responses API
-function extractText(resp: OpenAI.Responses.Response): string {
-  // Preferred helper when available
-  const asText = resp?.output_text;
-  if (typeof asText === "string" && asText.trim()) return asText.trim();
-
-  // TODO: add fallback according to API response structure
-
-  // Last resort
-  return "";
-}
+// (no-op placeholder removed; AI SDK returns { text })
 
 export default async function handler(
   req: NextApiRequest,
@@ -26,39 +18,61 @@ export default async function handler(
     // Verify this request comes from the Contentstack UI location
     const { stackApiKey } = await verifySignedLocation(req);
 
-    // Get the per-stack OpenAI key that you stored in /api/app-config/save-ai-key
-    const apiKey = getOpenAIKeyFor(stackApiKey);
-    if (!apiKey) return res.status(400).json({ error: "Missing OpenAI key" });
+    const { imageUrl } = req.body || {};
+    let { model } = (req.body || {}) as {
+      imageUrl?: string;
+      model?: string;
+      provider?: string;
+    };
+    const provider = (req.body?.provider as string | undefined) || "OpenAI";
+    const canonicalProvider: "OpenAI" | "Gemini" =
+      String(provider || "OpenAI").toLowerCase() === "gemini"
+        ? "Gemini"
+        : "OpenAI";
+    // Provider-specific defaults
+    if (!model) {
+      model =
+        canonicalProvider === "Gemini"
+          ? "gemini-2.0-flash-lite"
+          : "gpt-4o-mini";
+    }
 
-    const { imageUrl, model = "gpt-4o-mini" } = req.body || {};
+    // Get the per-stack key for the selected provider
+    const apiKey = getAIKeyFor(canonicalProvider, stackApiKey);
+    if (!apiKey)
+      return res
+        .status(400)
+        .json({ error: `Missing ${canonicalProvider} API key` });
     if (!imageUrl || typeof imageUrl !== "string") {
       return res.status(400).json({ error: "imageUrl required" });
     }
 
-    // Create a per-request OpenAI client with this stack's key
-    const openai = new OpenAI({ apiKey });
-
-    // Use the Responses API with image url input
+    // Use Vercel AI SDK with provider-specific model
     const instructions =
       "Write a short alt text for this image for screen readers. Keep it under 140 characters. " +
       "Describe only what is clearly visible. Mention on-image text if legible. Do not guess names or brands.";
 
-    const response = await openai.responses.create({
-      model: model,
-      input: [
+    const modelInstance =
+      canonicalProvider === "Gemini"
+        ? createGoogleGenerativeAI({ apiKey })(model)
+        : createOpenAI({ apiKey })(model);
+
+    const { text } = await generateText({
+      model: modelInstance,
+      temperature: 0.2,
+      maxTokens: 120,
+      messages: [
         {
           role: "user",
           content: [
-            { type: "input_text", text: instructions },
-            { type: "input_image", image_url: imageUrl, detail: "low" },
+            { type: "text", text: instructions },
+            { type: "image", image: imageUrl },
           ],
         },
       ],
-      temperature: 0.2,
-      max_output_tokens: 120,
     });
 
-    const altText = extractText(response) || "";
+    const altText = text || "";
     return res.status(200).json({ altText });
   } catch (e: unknown) {
     console.error(e);

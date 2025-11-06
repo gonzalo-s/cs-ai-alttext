@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 
 type AppSDK = Awaited<ReturnType<typeof ContentstackAppSDK.init>>;
 type AssetSidebarWidget = NonNullable<AppSDK["location"]["AssetSidebarWidget"]>;
-type SafeConfig = { model?: string };
 
 export default function AssetSidebar() {
   const [widget, setWidget] = useState<AssetSidebarWidget | null>(null);
+  const [provider, setProvider] = useState<string | null>(null);
   const [model, setModel] = useState("gpt-4o-mini");
   const [assetUid, setAssetUid] = useState("");
   const [assetUrl, setAssetUrl] = useState("");
@@ -24,14 +24,18 @@ export default function AssetSidebar() {
     let mounted = true;
     (async () => {
       const { default: cs } = await import("@contentstack/app-sdk");
-      const app = (await cs.init()) as AppSDK;
+      const app = await cs.init();
       if (!mounted) return;
+      console.log("🚀 ~ AssetSidebar ~ app:", app);
 
       const locData = await app.location.AssetSidebarWidget?.getData();
-      const cfg = (await app.getConfig()) as SafeConfig;
+      const cfg =
+        await app.location.AppConfigWidget?.installation.getInstallationData();
+      console.log("🚀 ~ AssetSidebar ~ cfg:", cfg);
 
       setWidget(app.location.AssetSidebarWidget ?? null);
-      setModel(cfg?.model || "gpt-4o-mini");
+      setModel(cfg?.configuration.model || "gpt-4o-mini");
+      setProvider(cfg?.configuration.providerName || null);
       setAssetUid(locData?.uid ?? "");
       setAssetUrl(locData?.url ?? "");
     })();
@@ -51,7 +55,11 @@ export default function AssetSidebar() {
           "content-type": "application/json",
           "x-app-token": appToken,
         },
-        body: JSON.stringify({ imageUrl: assetUrl, model }),
+        body: JSON.stringify({
+          imageUrl: assetUrl,
+          model,
+          provider: provider,
+        }),
       });
       const j = await r.json();
       setAltText(j.altText || "");
@@ -84,7 +92,7 @@ export default function AssetSidebar() {
       <div className="text-xs opacity-80">
         Asset UID: {assetUid || "unknown"}
       </div>
-
+      <div>{provider}</div>
       <button disabled={busy || !assetUrl} onClick={generate}>
         {busy ? "Working..." : "Generate"}
       </button>
